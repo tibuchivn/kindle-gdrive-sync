@@ -1,0 +1,7 @@
+# Node / clasp
+node_modules/
+.clasp.json
+.clasprc.json
+
+# macOS
+.DS_Store

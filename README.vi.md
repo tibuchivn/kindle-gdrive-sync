@@ -51,7 +51,7 @@ Thuần Google Apps Script: không cần server, không cần VPS, không cần 
 4. Sửa khối `CONFIG` ở đầu `Code.gs`:
 
 ```js
-KINDLE_EMAIL: 'ten_ban_ab12cd@kindle.com',  // ← bắt buộc
+KINDLE_EMAIL: 'your-name_xxxxxx@kindle.com',  // ← bắt buộc
 FOLDER_NAME:  'Kindle',                     // ← tên folder nguồn
 FOLDER_ID:    '',                           // ← tuỳ chọn, ưu tiên hơn FOLDER_NAME
 MAX_FILE_BYTES: 20 * 1024 * 1024,           // ← ngưỡng an toàn của Gmail

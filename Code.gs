@@ -2,51 +2,51 @@
  * ============================================================
  *  Kindle Drive Sync  —  Google Drive ➜ Send to Kindle (email)
  * ============================================================
- *  Luồng: bạn upload ebook vào 1 folder Drive  ➜  trigger 15 phút
- *  quét folder  ➜  gửi từng file vào email Send to Kindle của bạn
- *  ➜  file được chuyển vào subfolder "_sent".
+ *  Flow: you upload an ebook into one Drive folder  ➜  a 15-minute
+ *  trigger sweeps the folder  ➜  each file is emailed to your Send
+ *  to Kindle address  ➜  the file is moved into the "_sent" subfolder.
  *
- *  Entry point chạy tự động : syncKindle()
- *  Cài đặt / tạo trigger  : setup()
- *  Xem trước, không gửi   : dryRun()
- *  Xoá ký ức "đã báo lỗi": resetReported()
+ *  Trigger entry point      : syncKindle()
+ *  Install / create trigger : setup()
+ *  Preview, send nothing    : dryRun()
+ *  Forget "already reported": resetReported()
  * ============================================================
  */
 
 // ------------------------------------------------------------
-//  1. CẤU HÌNH  — sửa mỗi phần này
+//  1. CONFIG — this is the only block you need to edit
 // ------------------------------------------------------------
 const CONFIG = {
-  // Email Send to Kindle của bạn (Settings ➜ Send to Kindle Email Address)
-  // KHÔNG phải email đăng nhập Amazon.
-  KINDLE_EMAIL: 'ten-ban_xxxxxx@kindle.com',
+  // Your Send to Kindle address (Manage Your Content and Devices ➜
+  // Send to Kindle Email Address). NOT your Amazon login email.
+  KINDLE_EMAIL: 'your-name_xxxxxx@kindle.com',
 
-  // Tên hiển thị của người gửi
+  // Display name of the sender
   SENDER_NAME: 'Kindle Drive Sync',
 
-  // Cách xác định folder nguồn: nếu FOLDER_ID có giá trị thì dùng nó,
-  // ngược lại tìm folder theo tên FOLDER_NAME (tạo mới nếu chưa có).
+  // How the source folder is resolved: FOLDER_ID wins when set,
+  // otherwise the folder named FOLDER_NAME is used (created if missing).
   FOLDER_ID: '',
   FOLDER_NAME: 'Kindle',
 
-  // Folder con nhận file đã gửi xong
+  // Subfolder that receives files after a successful send
   SENT_SUBFOLDER: '_sent',
 
-  // File lớn hơn ngưỡng này sẽ KHÔNG gửi (Gmail cap ~25MB) mà báo cho bạn.
-  // 20MB là mức an toàn; có thể nâng lên 24MB nếu ebook thường to.
+  // Files above this size are NOT sent (Gmail caps a message at ~25MB)
+  // and are reported instead. 20MB is the safe value; 24MB at most.
   MAX_FILE_BYTES: 20 * 1024 * 1024,
 
-  // Định dạng Amazon nhận qua email (E001 = format không hỗ trợ).
-  // AZW/AZW3/MOBI/KFX đã bị bỏ — cần convert sang EPUB trước khi upload.
+  // Formats Amazon accepts by email (E001 = unsupported format).
+  // AZW/AZW3/MOBI/KFX were dropped — convert to EPUB before uploading.
   ALLOWED_EXT: ['epub', 'pdf', 'txt', 'rtf', 'htm', 'html', 'png', 'jpg', 'jpeg', 'gif', 'bmp'],
 
-  // Google Docs/Sheets nằm trong folder thì export thành PDF rồi gửi
+  // Export Google Docs sitting in the folder to PDF and send them
   CONVERT_GOOGLE_DOCS: true,
 
-  // Nơi nhận email báo lỗi; '' = gửi về chính tài khoản đang chạy script
+  // Where problem reports go; '' = the account running the script
   NOTIFY_EMAIL: '',
 
-  // Chủ đề email gửi Kindle — giữ ngắn gọn
+  // Subject prefix for the emails sent to Kindle — keep it short
   SUBJECT_PREFIX: '[Kindle] '
 };
 
@@ -55,46 +55,47 @@ const CONFIG = {
 // ------------------------------------------------------------
 
 /**
- * Chạy 1 lần sau khi sửa CONFIG. Tạo folder nếu chưa có, tạo trigger 15 phút.
+ * Run once after editing CONFIG. Creates the folder if missing and
+ * registers the 15-minute trigger.
  */
 function setup() {
   const folder = getSourceFolder_();
 
-  // xoá trigger cũ của cùng handler để không bị nhân đôi
+  // drop existing triggers for the same handler so they do not pile up
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'syncKindle') ScriptApp.deleteTrigger(t);
   });
 
   ScriptApp.newTrigger('syncKindle').timeBased().everyMinutes(15).create();
 
-  Logger.log('OK. Folder nguồn: %s (id=%s)', folder.getName(), folder.getId());
-  Logger.log('Đã tạo trigger chạy mỗi 15 phút. Kindle: %s', CONFIG.KINDLE_EMAIL);
+  Logger.log('OK. Source folder: %s (id=%s)', folder.getName(), folder.getId());
+  Logger.log('Created a trigger that runs every 15 minutes. Kindle: %s', CONFIG.KINDLE_EMAIL);
 
-  // nhắc nếu còn để nguyên email mẫu
+  // warn while the placeholder address is still in place
   if (CONFIG.KINDLE_EMAIL.indexOf('@kindle.com') === -1) {
-    Logger.log('CẢNH BÁO: CONFIG.KINDLE_EMAIL chưa phải địa chỉ @kindle.com.');
+    Logger.log('WARNING: CONFIG.KINDLE_EMAIL is not an @kindle.com address.');
   }
 }
 
 /**
- * Tắt tự động hoá (giữ nguyên file Drive, chỉ bỏ trigger).
+ * Turn the automation off (leaves Drive files untouched, only removes the trigger).
  */
 function uninstall() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'syncKindle') ScriptApp.deleteTrigger(t);
   });
-  Logger.log('Đã xoá trigger.');
+  Logger.log('Trigger removed.');
 }
 
 // ------------------------------------------------------------
-//  3. LUỒNG CHÍNH
+//  3. MAIN SWEEP
 // ------------------------------------------------------------
 
 function syncKindle() {
-  // Tránh 2 lượt chạy chồng nhau (trigger 15' + chạy tay) gửi trùng file
+  // Keeps the timer and a manual run from overlapping and sending twice
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30 * 1000)) {
-    Logger.log('Bỏ qua lượt này: lượt trước chưa chạy xong.');
+    Logger.log('Skipping this run: the previous one has not finished.');
     return;
   }
   try {
@@ -105,7 +106,7 @@ function syncKindle() {
 }
 
 /**
- * Chạy thử: liệt kê file sẽ gửi, không gửi và không di chuyển gì.
+ * Dry run: list what would be sent, send nothing, move nothing.
  */
 function dryRun() {
   runSync_(true);
@@ -115,12 +116,13 @@ function runSync_(isDryRun) {
   const srcFolder = getSourceFolder_();
   const sentFolder = getOrCreateSubfolder_(srcFolder, CONFIG.SENT_SUBFOLDER);
 
-  // Ký ức "đã báo lỗi file này" để không spam email mỗi 15 phút
+  // "already reported this file" memory, so a stuck file does not email
+  // you every 15 minutes
   const props = PropertiesService.getScriptProperties();
   const reported = readReported_(props);
 
-  const seen = {};        // key các file được xét trong lượt này
-  const problems = [];    // nội dung báo lỗi mới
+  const seen = {};        // keys of the files considered in this run
+  const problems = [];    // new problems to report
   const sent = [];
 
   const files = srcFolder.getFiles();
@@ -128,10 +130,10 @@ function runSync_(isDryRun) {
     const file = files.next();
     const name = file.getName();
 
-    // bỏ qua file rác / file đang upload dở
+    // skip junk files and files that are still uploading
     if (!name || name.charAt(0) === '.' || name.charAt(0) === '~') continue;
 
-    // ---- xác định ext + blob sẽ gửi ----
+    // ---- work out the extension and the blob to send ----
     const mime = file.getMimeType();
     let ext, sizeBytes, blob, outName = name;
 
@@ -159,32 +161,36 @@ function runSync_(isDryRun) {
 
     const key = file.getId() + ':' + sizeBytes;
 
-    // ---- kiểm tra định dạng ----
+    // ---- format check ----
     if (CONFIG.ALLOWED_EXT.indexOf(ext) === -1) {
       seen[key] = true;
+      Logger.log('Skipped (unsupported format): %s', name);
       addProblem_(key, reported, problems, {
         file: name,
-        reason: 'Định dạng .' + (ext || '?') + ' không được Send to Kindle hỗ trợ' +
-                ' (Amazon nhận EPUB, PDF, TXT, RTF, HTML, ảnh). File được để nguyên trong folder.'
+        reason: 'Format .' + (ext || '?') + ' is not supported by Send to Kindle' +
+                ' (Amazon accepts EPUB, PDF, TXT, RTF, HTML, images).' +
+                ' The file was left in the folder.'
       });
       continue;
     }
 
-    // ---- kiểm tra dung lượng ----
+    // ---- size check ----
     if (sizeBytes > CONFIG.MAX_FILE_BYTES) {
       seen[key] = true;
+      Logger.log('Skipped (too large): %s (%sMB)', name, mb_(sizeBytes));
       addProblem_(key, reported, problems, {
         file: name,
-        reason: 'Dung lượng ' + mb_(sizeBytes) + 'MB vượt ngưỡng ' +
-                mb_(CONFIG.MAX_FILE_BYTES) + 'MB (Gmail không gửi được).' +
-                ' File được để nguyên — hãy upload thủ công tại https://www.amazon.com/sendtokindle'
+        reason: 'Size ' + mb_(sizeBytes) + 'MB exceeds the ' +
+                mb_(CONFIG.MAX_FILE_BYTES) + 'MB limit (Gmail cannot send it).' +
+                ' The file was left in the folder — upload it manually at' +
+                ' https://www.amazon.com/sendtokindle'
       });
       continue;
     }
 
-    // ---- gửi ----
+    // ---- send ----
     if (isDryRun) {
-      Logger.log('[DRY RUN] sẽ gửi: %s (%sMB)', outName, mb_(sizeBytes));
+      Logger.log('[DRY RUN] would send: %s (%sMB)', outName, mb_(sizeBytes));
       sent.push(outName);
       continue;
     }
@@ -193,35 +199,37 @@ function runSync_(isDryRun) {
       MailApp.sendEmail({
         to: CONFIG.KINDLE_EMAIL,
         subject: CONFIG.SUBJECT_PREFIX + outName,
-        body: 'Tự động gửi từ Google Drive: ' + outName,
+        body: 'Sent automatically from Google Drive: ' + outName,
         name: CONFIG.SENDER_NAME,
         attachments: [blob]
       });
 
-      // chỉ di chuyển sau khi gửi thành công
+      // move only after the mail went out
       file.moveTo(sentFolder);
       sent.push(outName);
-      Logger.log('Đã gửi: %s (%sMB)', outName, mb_(sizeBytes));
+      Logger.log('Sent: %s (%sMB)', outName, mb_(sizeBytes));
     } catch (err) {
       seen[key] = true;
+      Logger.log('Send failed: %s — %s', name, err.message);
       addProblem_(key, reported, problems, {
         file: name,
-        reason: 'Gửi thất bại: ' + err.message + ' — file vẫn nằm trong folder, sẽ thử lại lượt sau.'
+        reason: 'Send failed: ' + err.message +
+                ' — the file is still in the folder and will be retried on the next run.'
       });
     }
   }
 
-  // dọn ký ức: chỉ giữ các file còn nằm trong folder
+  // garbage-collect the memory: keep only files that are still in the folder
   if (!isDryRun) writeReported_(props, seen);
 
   if (problems.length > 0 && !isDryRun) notifyProblems_(problems);
 
-  Logger.log('Xong. Gửi %s file, %s vấn đề.', sent.length, problems.length);
+  Logger.log('Done. Sent %s file(s), %s problem(s).', sent.length, problems.length);
   return { sent: sent, problems: problems };
 }
 
 // ------------------------------------------------------------
-//  4. TIỆN ÍCH
+//  4. HELPERS
 // ------------------------------------------------------------
 
 function getSourceFolder_() {
@@ -261,10 +269,10 @@ function writeReported_(props, map) {
   props.setProperty('REPORTED', JSON.stringify(map));
 }
 
-/** Thêm vấn đề vào danh sách báo cáo, nhưng chỉ khi chưa báo cho file này. */
+/** Queue a problem for the report, but only if this file was not reported yet. */
 function addProblem_(key, reported, problems, info) {
   if (reported[key]) return;
-  problems.push(info.file + '\n    → ' + info.reason);
+  problems.push(info.file + '\n    -> ' + info.reason);
 }
 
 function notifyProblems_(problems) {
@@ -273,18 +281,18 @@ function notifyProblems_(problems) {
   try {
     MailApp.sendEmail({
       to: to,
-      subject: '[Kindle Sync] ' + problems.length + ' file không gửi được',
-      body: 'Script không gửi được các file sau lên Kindle:\n\n' +
+      subject: '[Kindle Sync] ' + problems.length + ' file(s) could not be sent',
+      body: 'The script could not send these files to Kindle:\n\n' +
             problems.join('\n\n') +
-            '\n\n--\nFile vẫn nằm trong folder nguồn. Mỗi file chỉ được báo 1 lần.'
+            '\n\n--\nThe files are still in the source folder. Each file is reported once.'
     });
   } catch (e) {
-    Logger.log('Không gửi được email báo lỗi: ' + e.message);
+    Logger.log('Could not send the problem report: ' + e.message);
   }
 }
 
-/** Xoá ký ức đã-báo để lần sau báo lại toàn bộ vấn đề. */
+/** Forget the reported-files memory so every problem is reported again. */
 function resetReported() {
   PropertiesService.getScriptProperties().deleteProperty('REPORTED');
-  Logger.log('Đã xoá ký ức báo lỗi.');
+  Logger.log('Reported-files memory cleared.');
 }

@@ -91,10 +91,10 @@ Edit the `CONFIG` block at the top of `Code.gs`:
 
 ```js
 const CONFIG = {
-  KINDLE_EMAIL: 'yourname_ab12cd@kindle.com', // required
-  FOLDER_NAME: 'Kindle',                      // folder to watch
-  FOLDER_ID: '',                              // optional, wins over FOLDER_NAME
-  MAX_FILE_BYTES: 20 * 1024 * 1024,           // raise to 24MB at most
+  KINDLE_EMAIL: 'your-name_xxxxxx@kindle.com', // required
+  FOLDER_NAME: 'Kindle',                       // folder to watch
+  FOLDER_ID: '',                               // optional, wins over FOLDER_NAME
+  MAX_FILE_BYTES: 20 * 1024 * 1024,            // raise to 24MB at most
   // ...
 };
 ```
@@ -153,9 +153,9 @@ dropdown and click **Run**.
 | `NOTIFY_EMAIL` | `''` | Where problem reports go; empty = the script owner's address. |
 | `SUBJECT_PREFIX` | `[Kindle] ` | Prefix of the email subject. |
 
-The wording of the problem-report emails is Vietnamese (the original author's
-language) — edit `addProblem_()` / `notifyProblems_()` in `Code.gs` if you want
-to change it.
+All strings — comments, execution-log lines, email bodies and problem reports —
+are in English. To localize the notification emails, edit the `reason` strings in
+`runSync_()` and the subject/body in `notifyProblems_()`.
 
 ## How it decides what to send
 
